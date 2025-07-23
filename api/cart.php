@@ -133,13 +133,23 @@ try {
         case 'GET':
             // Get cart contents
             $stmt = $pdo->prepare("
-                SELECT ci.product_id, ci.quantity, p.name, p.price, p.image
-                FROM cart_items ci
-                JOIN products p ON ci.product_id = p.id
-                WHERE ci.cart_id = ?
-            ");
-            $stmt->execute([$cartId]);
-            $items = $stmt->fetchAll();
+    SELECT ci.product_id, ci.quantity, p.name, p.price,
+           COALESCE(pi.image_url, '/uploads/products/placeholder.jpg') AS image
+    FROM cart_items ci
+    JOIN products p ON ci.product_id = p.id
+    LEFT JOIN (
+        SELECT product_id, image_url
+        FROM product_images
+        WHERE id IN (
+            SELECT MIN(id) FROM product_images GROUP BY product_id
+        )
+    ) pi ON pi.product_id = p.id
+    WHERE ci.cart_id = ?
+");
+$stmt->execute([$cartId]);
+$items = $stmt->fetchAll();
+
+
 
             $totalQty = array_sum(array_column($items, 'quantity'));
             

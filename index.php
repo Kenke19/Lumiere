@@ -14,16 +14,14 @@ if ($searchQuery) {
     $pageHeading = "Category: " . htmlspecialchars($categoryName);
 }
 
-$twoDaysAgo = (new DateTime('-2 days'))->format('Y-m-d H:i:s');
-
 $stmtFeatured = $pdo->prepare("
     SELECT id, name, price, image 
     FROM products
-    WHERE stock > 0 AND created_at >= :twoDaysAgo
+    WHERE stock > 0
     ORDER BY created_at DESC
-    LIMIT 8
+    LIMIT 10
 ");
-$stmtFeatured->execute(['twoDaysAgo' => $twoDaysAgo]);
+$stmtFeatured->execute();
 $featuredProducts = $stmtFeatured->fetchAll(PDO::FETCH_ASSOC);
 
 // Now fetch images for all featured products

@@ -19,10 +19,10 @@
         <a href="categories.php" class="text-gray-700 hover:text-indigo-600 font-medium"
           >Categories</a
         >
-        <a href="#" class="text-gray-700 hover:text-indigo-600 font-medium"
+        <a href="about.php" class="text-gray-700 hover:text-indigo-600 font-medium"
           >About</a
         >
-        <a href="#" class="text-gray-700 hover:text-indigo-600 font-medium"
+        <a href="contact.php" class="text-gray-700 hover:text-indigo-600 font-medium"
           >Contact</a
         >
         <a href="auth.php" class="text-gray-700 hover:text-indigo-600 font-medium"
@@ -67,10 +67,10 @@
       <a href="categories.php" class="block py-2 text-gray-700 hover:text-indigo-600"
         >Categories</a
       >
-      <a href="#" class="block py-2 text-gray-700 hover:text-indigo-600"
+      <a href="about.php" class="block py-2 text-gray-700 hover:text-indigo-600"
         >About</a
       >
-      <a href="#" class="block py-2 text-gray-700 hover:text-indigo-600"
+      <a href="contact.php" class="block py-2 text-gray-700 hover:text-indigo-600"
         >Contact</a
       >
       <a href="auth.php" class="block py-2 text-gray-700 hover:text-indigo-600"
@@ -130,10 +130,6 @@
         <div class="flex justify-between mb-2">
           <span class="text-gray-600">Subtotal:</span>
           <span id="cart-subtotal" class="font-bold">$0.00</span>
-        </div>
-        <div class="flex justify-between mb-4">
-          <span class="text-gray-600">Shipping:</span>
-          <span class="font-bold">Free</span>
         </div>
         <div class="flex justify-between text-lg font-bold mb-6">
           <span>Total:</span>

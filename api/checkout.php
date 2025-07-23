@@ -21,14 +21,23 @@ if (!$cartToken) {
 
 // Fetch cart items
 $stmt = $pdo->prepare("
-    SELECT ci.product_id, ci.quantity, p.name, p.price, p.image
+    SELECT ci.product_id, ci.quantity, p.name, p.price,
+           COALESCE(pi.image_url, 'uploads/products/placeholder.jpg') AS image
     FROM cart_items ci
     JOIN products p ON ci.product_id = p.id
     JOIN carts c ON ci.cart_id = c.id
+    LEFT JOIN (
+        SELECT product_id, image_url
+        FROM product_images
+        WHERE id IN (
+            SELECT MIN(id) FROM product_images GROUP BY product_id
+        )
+    ) pi ON pi.product_id = p.id
     WHERE c.cart_token = ?
 ");
 $stmt->execute([$cartToken]);
 $cartItems = $stmt->fetchAll();
+
 
 if (!$cartItems) {
     echo "Your cart is empty.";

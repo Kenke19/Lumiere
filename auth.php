@@ -1,86 +1,142 @@
 <?php
-
+// Secure session cookie params - adjust domain for production
 ini_set('session.cookie_httponly', 1);
 ini_set('session.cookie_secure', 1); 
 ini_set('session.use_strict_mode', 1);
 session_set_cookie_params([
-    'lifetime' => 86400, // 1 day
+    'lifetime' => 86400,
     'path' => '/',
-    'domain' => $_SERVER['HTTP_HOST'],
+    'domain' => $_SERVER['HTTP_HOST'], // adjust for your domain without port
     'secure' => true,
     'httponly' => true,
     'samesite' => 'Strict'
 ]);
-
 session_start();
+
+// Generate CSRF token if not set
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+// Rate limiting helpers
+function loginRateLimitExceeded($maxAttempts = 5, $decaySeconds = 300) {
+    $now = time();
+    if (!isset($_SESSION['login_attempts'])) {
+        $_SESSION['login_attempts'] = 0;
+        $_SESSION['login_attempt_start'] = $now;
+        return false;
+    }
+
+    // Reset count if decay time passed
+    if ($now - $_SESSION['login_attempt_start'] > $decaySeconds) {
+        $_SESSION['login_attempts'] = 0;
+        $_SESSION['login_attempt_start'] = $now;
+        return false;
+    }
+
+    return $_SESSION['login_attempts'] >= $maxAttempts;
+}
+
+function recordLoginAttempt() {
+    if (!isset($_SESSION['login_attempts'])) {
+        $_SESSION['login_attempts'] = 0;
+        $_SESSION['login_attempt_start'] = time();
+    }
+    $_SESSION['login_attempts']++;
+}
+
 require 'Admin/includes/db.php';
 require_once 'Admin/includes/mailer.php';
 
-// Enable error reporting for debugging
+// Error handling for production (no output, log errors)
 error_reporting(E_ALL);
-ini_set('display_errors', 1);
+ini_set('display_errors', 0);
+ini_set('log_errors', 1);
+ini_set('error_log', __DIR__ . '/error.log');
 
 $login_error = '';
 $register_error = '';
 $register_success = '';
 $flip_to_register = false;
 
+function verifyCsrfToken($token) {
+    if (empty($_SESSION['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $token)) {
+        die('Invalid CSRF token.');
+    }
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    verifyCsrfToken($_POST['csrf_token'] ?? '');
+
     if (isset($_POST['login_submit'])) {
-        $identifier = trim($_POST['identifier']);
-        $password = $_POST['password'];
-
-        if (empty($identifier) || empty($password)) {
-            $login_error = 'Please fill in all fields.';
+        // Rate limiting check
+        if (loginRateLimitExceeded()) {
+            $login_error = 'Too many login attempts. Please try again after a few minutes.';
         } else {
-            // First, try admin login by username
-            $stmt = $pdo->prepare("SELECT * FROM admins WHERE username = ? LIMIT 1");
-            $stmt->execute([$identifier]);
-            $admin = $stmt->fetch();
+            $identifier = trim($_POST['identifier']);
+            $password = $_POST['password'];
 
-            if ($admin) {
-                if (password_verify($password, $admin['password_hash'])) {
-                    session_regenerate_id(true);
-                    $_SESSION = [
-                        'user_id' => $admin['id'],
-                        'username' => $admin['username'],
-                        'role' => 'admin',
-                        'logged_in' => true
-                    ];
-                    header('Location: Admin/index.php');  // redirect to admin dashboard
-                    exit();
-                } else {
-                    $login_error = 'Invalid password.';
-                }
+            if (empty($identifier) || empty($password)) {
+                $login_error = 'Please fill in all fields.';
             } else {
-                // If not admin, try user login by email
-                $cleanEmail = strtolower(preg_replace('/\s+/', '', $identifier));
-                $stmt = $pdo->prepare("SELECT * FROM users WHERE email = ? LIMIT 1");
-                $stmt->execute([$cleanEmail]);
-                $user = $stmt->fetch();
+                // Try admin login
+                $stmt = $pdo->prepare("SELECT * FROM admins WHERE username = ? LIMIT 1");
+                $stmt->execute([$identifier]);
+                $admin = $stmt->fetch();
 
-                if ($user) {
-                    if (password_verify($password, $user['password_hash'])) {
+                if ($admin) {
+                    if (password_verify($password, $admin['password_hash'])) {
                         session_regenerate_id(true);
                         $_SESSION = [
-                            'user_id' => $user['id'],
-                            'username' => $user['name'],
-                            'email' => $user['email'],
-                            'role' => 'user',
+                            'user_id' => $admin['id'],
+                            'username' => $admin['username'],
+                            'role' => 'admin',
                             'logged_in' => true
                         ];
-                        header('Location: index.php');
+                        // Reset login attempts
+                        $_SESSION['login_attempts'] = 0;
+                        header('Location: Admin/index.php');
                         exit();
                     } else {
+                        recordLoginAttempt();
                         $login_error = 'Invalid password.';
                     }
                 } else {
-                    $login_error = 'Account not found. Please check your credentials.';
+                    // User login by email
+                    $cleanEmail = strtolower(preg_replace('/\s+/', '', $identifier));
+                    $stmt = $pdo->prepare("SELECT * FROM users WHERE email = ? LIMIT 1");
+                    $stmt->execute([$cleanEmail]);
+                    $user = $stmt->fetch();
+
+                    if ($user) {
+                        if (!$user['email_verified']) {
+                            $login_error = 'Please verify your email before logging in.';
+                        } elseif (password_verify($password, $user['password_hash'])) {
+                            session_regenerate_id(true);
+                            $_SESSION = [
+                                'user_id' => $user['id'],
+                                'username' => $user['name'],
+                                'email' => $user['email'],
+                                'role' => 'user',
+                                'logged_in' => true
+                            ];
+                            // Reset login attempts
+                            $_SESSION['login_attempts'] = 0;
+                            header('Location: index.php');
+                            exit();
+                        } else {
+                            recordLoginAttempt();
+                            $login_error = 'Invalid password.';
+                        }
+                    } else {
+                        recordLoginAttempt();
+                        $login_error = 'Account not found. Please check your credentials.';
+                    }
                 }
             }
         }
+
     } elseif (isset($_POST['register_submit'])) {
-        // REGISTER FORM PROCESSING
         $name = trim($_POST['name']);
         $email = trim($_POST['email']);
         $password = $_POST['password'];
@@ -106,35 +162,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $register_error = 'Email is already registered.';
             } else {
                 $password_hash = password_hash($password, PASSWORD_BCRYPT);
-                $stmt = $pdo->prepare("INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)");
-                
-                if ($stmt->execute([$name, $email, $password_hash])) {
-                    // Send welcome email
-                    $subject = "Welcome to Lumière!";
+                $verification_token = bin2hex(random_bytes(32));
+
+                $stmt = $pdo->prepare("INSERT INTO users (name, email, password_hash, email_verified, email_verification_token) VALUES (?, ?, ?, 0, ?)");
+                if ($stmt->execute([$name, $email, $password_hash, $verification_token])) {
+                    // Send email verification
+                    $verifyUrl = "https://localhost/E-shop/verify_email.php?token=$verification_token"; //to be changed in production
+                    $subject = "Verify Your Email - Lumière";
                     $htmlBody = "
-                        <h1>Welcome, " . htmlspecialchars($name) . "!</h1>
-                        <p>Thank you for registering at Lumière.</p>
-                        <p>Start exploring our collection today!</p>
+                        <h1>Hello, " . htmlspecialchars($name) . "!</h1>
+                        <p>Thanks for registering at Lumière. Please verify your email by clicking the link below:</p>
+                        <p><a href='$verifyUrl'>$verifyUrl</a></p>
+                        <p>If you didn't register, ignore this email.</p>
                         <br>
-                        <p>Best regards,<br>Lumière Team</p>
-                    ";
-                    $plainBody = "Welcome, $name!\n\nThank you for registering at Lumière.\n\nStart exploring our collection today!\n\nBest regards,\nLumière Team";
+                        <p>Best Regards,<br>Lumière Team</p>";
+                    $plainBody = "Hello, $name!\n\nThanks for registering at Lumière. Please verify your email:\n$verifyUrl\n\nIf you didn't register, ignore this email.\n\nBest Regards,\nLumière Team";
+
 
                     sendEmail($email, $name, $subject, $htmlBody, $plainBody);
 
-                    // Auto-login after registration
-                    $userId = $pdo->lastInsertId();
-                    session_regenerate_id(true);
-                    $_SESSION = [
-                        'user_id' => $userId,
-                        'username' => $name,
-                        'email' => $email,
-                        'role' => 'user',
-                        'logged_in' => true
-                    ];
-                    
-                    header('Location: index.php');
-                    exit();
+
+                    $register_success = 'Registration successful! Please check your email to verify your account.';
                 } else {
                     $register_error = 'Registration failed. Please try again.';
                 }
@@ -154,7 +202,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
 <style>
-  .form-container {
+    .form-container {
     perspective: 1000px;
     height: 100%;
     position: relative;
@@ -230,11 +278,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 </style>
 </head>
 <body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
-  <div class="w-full max-w-md md:max-w-6xl flex flex-col md:flex-row rounded-2xl overflow-hidden shadow-2xl mx-auto bg-white min-h-[600px]">
-    
-    <!-- Branding Section (Desktop only) -->
-    <div class="branding-section hidden md:flex gradient-bg text-white p-12 flex-1 flex-col justify-center items-center text-center">
-      <div class="mb-8">
+
+<div class="w-full max-w-md md:max-w-6xl flex flex-col md:flex-row rounded-2xl overflow-hidden shadow-2xl mx-auto bg-white min-h-[600px]">
+  
+  <!-- Branding Section (Desktop only) -->
+  <div class="branding-section hidden md:flex gradient-bg text-white p-12 flex-1 flex-col justify-center items-center text-center">
+    <div class="mb-8">
         <h1 class="text-4xl md:text-5xl font-bold mb-2">LUMIÈRE</h1>
         <p class="text-lg md:text-xl opacity-90">Illuminate Your Style</p>
       </div>
@@ -249,61 +298,72 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         Discover our exclusive collection of premium fashion and accessories. 
         Join our community of style enthusiasts today.
       </p>
+  </div>
+  
+  <!-- Form Section -->
+  <div class="flex-1 relative">
+    <div class="form-container w-full h-full">
+      <div class="form-flip <?= $flip_to_register ? 'flipped' : '' ?>">
+        
+        <!-- Login Form -->
+        <div class="form-front">
+  <div class="max-w-md mx-auto w-full">
+    <!-- Mobile Branding -->
+    <div class="mobile-branding md:hidden mb-6 text-center">
+      <h1 class="text-3xl font-bold text-gray-800 mb-1">LUMIÈRE</h1>
+      <p class="text-gray-600">Illuminate Your Style</p>
     </div>
+
+    <h4 class="text-2xl md:text-3xl font-bold text-gray-800 mb-2">Welcome back!</h4>
+    <p class="text-gray-600 mb-6 md:mb-8 text-sm md:text-base">Sign in to access your account</p>
     
-    <!-- Form Section -->
-    <div class="flex-1 relative">
-      <div class="form-container w-full h-full">
-        <div class="form-flip <?= $flip_to_register ? 'flipped' : '' ?>">
-          
-          <!-- Login Form -->
-          <div class="form-front">
-            <div class="max-w-md mx-auto w-full">
-              <!-- Mobile Branding -->
-              <div class="mobile-branding md:hidden mb-6 text-center">
-                <h1 class="text-3xl font-bold text-gray-800 mb-1">LUMIÈRE</h1>
-                <p class="text-gray-600">Illuminate Your Style</p>
-              </div>
-              <p class="text-gray-600 mb-6 md:mb-8 text-sm md:text-base">Sign in to access your account</p>
-              
-              <?php if ($login_error): ?>
-                <p class="text-red-600 mb-4"><?= htmlspecialchars($login_error) ?></p>
-              <?php endif; ?>
-              
-              <form method="POST" novalidate>
-                <div class="space-y-4 md:space-y-6">
-                  <div class="relative">
-                    <input 
-                      type="text" 
-                      id="identifier" 
-                      name="identifier" 
-                      class="input-field w-full px-4 py-3 border-b-2 border-gray-300 focus:border-indigo-500 outline-none transition bg-transparent" 
-                      placeholder=" " 
-                      required 
-                      autocomplete="username"
-                      value="<?= isset($_POST['identifier']) && !$flip_to_register ? htmlspecialchars($_POST['identifier']) : '' ?>"
-                    />
-                    <label for="identifier" class="absolute left-4 top-3 text-gray-500 transition-all duration-300 pointer-events-none">Email </label>
-                  </div>
-                  
-                  <div class="relative">
-                    <input 
-                      type="password" 
-                      id="password" 
-                      name="password" 
-                      class="input-field w-full px-4 py-3 border-b-2 border-gray-300 focus:border-indigo-500 outline-none transition bg-transparent" 
-                      placeholder=" " 
-                      required 
-                      autocomplete="current-password"
-                    />
-                    <label for="password" class="absolute left-4 top-3 text-gray-500 transition-all duration-300 pointer-events-none">Password</label>
-                  </div>
-                  
-                  <button type="submit" name="login_submit" class="w-full gradient-bg text-white py-3 px-4 rounded-lg font-medium hover:opacity-90 transition shadow-lg">
-                    Sign In
-                  </button>
-                  
-                  <div class="relative my-6">
+    <?php if ($login_error): ?>
+      <p class="text-red-600 mb-4"><?= htmlspecialchars($login_error) ?></p>
+    <?php endif; ?>
+
+    <form method="POST" novalidate>
+      <!-- CSRF Token input (must always be included) -->
+      <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
+
+      <div class="space-y-4 md:space-y-6">
+        <div class="relative">
+          <input 
+            type="text" 
+            id="identifier" 
+            name="identifier" 
+            class="input-field w-full px-4 py-3 border-b-2 border-gray-300 focus:border-indigo-500 outline-none transition bg-transparent" 
+            placeholder=" " 
+            required 
+            autocomplete="username"
+            value="<?= isset($_POST['identifier']) && !$flip_to_register ? htmlspecialchars($_POST['identifier']) : '' ?>"
+          />
+          <label for="identifier" class="absolute left-4 top-3 text-gray-500 transition-all duration-300 pointer-events-none">Email or Username</label>
+        </div>
+
+        <div class="relative">
+          <input 
+            type="password" 
+            id="password" 
+            name="password" 
+            class="input-field w-full px-4 py-3 border-b-2 border-gray-300 focus:border-indigo-500 outline-none transition bg-transparent" 
+            placeholder=" " 
+            required 
+            autocomplete="current-password"
+          />
+          <label for="password" class="absolute left-4 top-3 text-gray-500 transition-all duration-300 pointer-events-none">Password</label>
+          <button type="button" 
+          class="absolute right-3 top-3 text-gray-400 hover:text-indigo-600 focus:outline-none" 
+          aria-label="Toggle password visibility" 
+          onclick="togglePasswordVisibility('password', this)">
+    <i class="fas fa-eye"></i>
+  </button>
+        </div>
+
+        <button type="submit" name="login_submit" class="w-full gradient-bg text-white py-3 px-4 rounded-lg font-medium hover:opacity-90 transition shadow-lg">
+          Sign In
+        </button>
+
+        <div class="relative my-6">
                     <div class="absolute inset-0 flex items-center">
                       <div class="w-full border-t border-gray-300"></div>
                     </div>
@@ -321,110 +381,120 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="g_id_signin" data-type="standard"></div>
                   </div>
                   
-                  <p class="text-center text-sm text-gray-600">
-                    Don't have an account? 
-                    <button type="button" onclick="flipForm()" class="text-indigo-600 font-medium hover:text-indigo-500">Sign up</button>
-                  </p>
-                </div>
-              </form>
-            </div>
+        <p class="text-center text-sm text-gray-600">
+          Don't have an account? 
+          <button type="button" onclick="flipForm()" class="text-indigo-600 font-medium hover:text-indigo-500">Sign up</button>
+        </p>
+      </div>
+    </form>
+  </div>
+</div>
+
+        
+        <!-- Register Form -->
+<div class="form-back">
+  <div class="max-w-md mx-auto w-full">
+    <h2 class="text-2xl md:text-3xl font-bold text-gray-800 mb-2">Create Account</h2>
+    <p class="text-gray-600 mb-6 md:mb-8 text-sm md:text-base">Join Lumière to start shopping</p>
+
+    <?php if ($register_error): ?>
+      <p class="text-red-600 mb-4"><?= htmlspecialchars($register_error) ?></p>
+    <?php elseif ($register_success): ?>
+      <p class="text-green-600 mb-4"><?= $register_success ?></p>
+    <?php endif; ?>
+
+    <form method="POST" novalidate>
+      <!-- CSRF Token -->
+      <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
+
+      <div class="space-y-4 md:space-y-6">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div class="relative">
+            <input 
+              type="text" 
+              id="name" 
+              name="name" 
+              required 
+              autocomplete="given-name"
+              class="input-field w-full px-4 py-3 border-b-2 border-gray-300 focus:border-indigo-500 outline-none transition bg-transparent" 
+              placeholder=" " 
+              value="<?= isset($_POST['name']) && $flip_to_register ? htmlspecialchars($_POST['name']) : '' ?>" 
+            />
+            <label for="name" class="absolute left-4 top-3 text-gray-500 transition-all duration-300 pointer-events-none">Full Name</label>
           </div>
-          
-          <!-- Register Form -->
-          <div class="form-back">
-            <div class="max-w-md mx-auto w-full">
-              <h2 class="text-2xl md:text-3xl font-bold text-gray-800 mb-2">Create Account</h2>
-              <p class="text-gray-600 mb-6 md:mb-8 text-sm md:text-base">Join Lumière to start shopping</p>
-              
-              <?php if ($register_error): ?>
-                <p class="text-red-600 mb-4"><?= htmlspecialchars($register_error) ?></p>
-              <?php elseif ($register_success): ?>
-                <p class="text-green-600 mb-4"><?= $register_success ?></p>
-              <?php endif; ?>
-              
-              <form method="POST" novalidate>
-                <div class="space-y-4 md:space-y-6">
-                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div class="relative">
-                      <input 
-                        type="text" 
-                        id="name" 
-                        name="name" 
-                        class="input-field w-full px-4 py-3 border-b-2 border-gray-300 focus:border-indigo-500 outline-none transition bg-transparent" 
-                        placeholder=" " 
-                        required 
-                        autocomplete="given-name"
-                        value="<?= isset($_POST['name']) && $flip_to_register ? htmlspecialchars($_POST['name']) : '' ?>"
-                      />
-                      <label for="name" class="absolute left-4 top-3 text-gray-500 transition-all duration-300 pointer-events-none">Full Name</label>
-                    </div>
-                    <div class="relative">
-                      <input 
-                        type="email" 
-                        id="email" 
-                        name="email" 
-                        class="input-field w-full px-4 py-3 border-b-2 border-gray-300 focus:border-indigo-500 outline-none transition bg-transparent" 
-                        placeholder=" " 
-                        required 
-                        autocomplete="email"
-                        value="<?= isset($_POST['email']) && $flip_to_register ? htmlspecialchars($_POST['email']) : '' ?>"
-                      />
-                      <label for="email" class="absolute left-4 top-3 text-gray-500 transition-all duration-300 pointer-events-none">Email Address</label>
-                    </div>
-                  </div>
-                  
-                  <div class="relative">
-                    <input 
-                      type="password" 
-                      id="password" 
-                      name="password" 
-                      class="input-field w-full px-4 py-3 border-b-2 border-gray-300 focus:border-indigo-500 outline-none transition bg-transparent" 
-                      placeholder=" " 
-                      required 
-                      autocomplete="new-password"
-                    />
-                    <label for="password" class="absolute left-4 top-3 text-gray-500 transition-all duration-300 pointer-events-none">Password</label>
-                  </div>
-                  
-                  <div class="relative">
-                    <input 
-                      type="password" 
-                      id="confirm_password" 
-                      name="confirm_password" 
-                      class="input-field w-full px-4 py-3 border-b-2 border-gray-300 focus:border-indigo-500 outline-none transition bg-transparent" 
-                      placeholder=" " 
-                      required 
-                      autocomplete="new-password"
-                    />
-                    <label for="confirm_password" class="absolute left-4 top-3 text-gray-500 transition-all duration-300 pointer-events-none">Confirm Password</label>
-                  </div>
-                  
-                  <div class="flex items-start">
-                    <input type="checkbox" id="terms" name="terms" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded mt-1" required />
-                    <label for="terms" class="ml-2 block text-sm text-gray-700">
-                      I agree to the <a href="#" class="text-indigo-600 hover:text-indigo-500">Terms</a> and <a href="#" class="text-indigo-600 hover:text-indigo-500">Privacy Policy</a>
-                    </label>
-                  </div>
-                  
-                  <button type="submit" name="register_submit" class="w-full gradient-bg text-white py-3 px-4 rounded-lg font-medium hover:opacity-90 transition shadow-lg">
-                    Sign Up
-                  </button>
-                  
-                  <p class="text-center text-sm text-gray-600">
-                    Already have an account? 
-                    <button type="button" onclick="flipForm()" class="text-indigo-600 font-medium hover:text-indigo-500">Sign in</button>
-                  </p>
-                </div>
-              </form>
-            </div>
+          <div class="relative">
+            <input 
+              type="email" 
+              id="email" 
+              name="email" 
+              required 
+              autocomplete="email"
+              class="input-field w-full px-4 py-3 border-b-2 border-gray-300 focus:border-indigo-500 outline-none transition bg-transparent" 
+              placeholder=" " 
+              value="<?= isset($_POST['email']) && $flip_to_register ? htmlspecialchars($_POST['email']) : '' ?>" 
+            />
+            <label for="email" class="absolute left-4 top-3 text-gray-500 transition-all duration-300 pointer-events-none">Email Address</label>
           </div>
-          
         </div>
+
+        <div class="relative">
+  <input 
+    type="password" 
+    id="register_password" 
+    name="password" 
+    required 
+    autocomplete="new-password"
+    class="input-field w-full px-4 py-3 pr-10 border-b-2 border-gray-300 focus:border-indigo-500 outline-none transition bg-transparent" 
+    placeholder=" " 
+  />
+  <label for="register_password" class="absolute left-4 top-3 text-gray-500 transition-all duration-300 pointer-events-none">Password</label>
+
+  <button type="button" 
+          class="absolute right-3 top-3 text-gray-400 hover:text-indigo-600 focus:outline-none" 
+          aria-label="Toggle password visibility" 
+          onclick="togglePasswordVisibility('register_password', this)">
+    <i class="fas fa-eye"></i>
+  </button>
+</div>
+
+<div class="relative">
+  <input 
+    type="password" 
+    id="register_confirm_password" 
+    name="confirm_password" 
+    required 
+    autocomplete="new-password"
+    class="input-field w-full px-4 py-3 pr-10 border-b-2 border-gray-300 focus:border-indigo-500 outline-none transition bg-transparent" 
+    placeholder=" " 
+  />
+  <label for="register_confirm_password" class="absolute left-4 top-3 text-gray-500 transition-all duration-300 pointer-events-none">Confirm Password</label>
+
+  <button type="button" 
+          class="absolute right-3 top-3 text-gray-400 hover:text-indigo-600 focus:outline-none" 
+          aria-label="Toggle confirm password visibility" 
+          onclick="togglePasswordVisibility('register_confirm_password', this)">
+    <i class="fas fa-eye"></i>
+  </button>
+</div>
+
+        <button type="submit" name="register_submit" class="w-full gradient-bg text-white py-3 px-4 rounded-lg font-medium hover:opacity-90 transition shadow-lg">Sign Up</button>
+
+        <p class="text-center text-sm text-gray-600">
+          Already have an account? 
+          <button type="button" onclick="flipForm()" class="text-indigo-600 font-medium hover:text-indigo-500">Sign in</button>
+        </p>
+      </div>
+    </form>
+  </div>
+</div>
+
+      
       </div>
     </div>
   </div>
-  
-  <script>
+</div>
+
+<script>
     function flipForm() {
       const flipContainer = document.querySelector('.form-flip');
       const body = document.body;
@@ -466,8 +536,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         input.nextElementSibling.classList.add('text-indigo-500');
       }
     });
-  </script>
-  
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
+    function togglePasswordVisibility(inputId, btn) {
+  const input = document.getElementById(inputId);
+  const icon = btn.querySelector('i');
+
+  if (input.type === 'password') {
+    input.type = 'text';
+    icon.classList.remove('fa-eye');
+    icon.classList.add('fa-eye-slash');
+  } else {
+    input.type = 'password';
+    icon.classList.remove('fa-eye-slash');
+    icon.classList.add('fa-eye');
+  }
+}
+
+</script>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 </body>
 </html>
