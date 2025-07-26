@@ -32,16 +32,15 @@
           <ul class="space-y-2">
             <li><a href="index.php" class="text-gray-400 hover:text-white">Home</a></li>
             <li><a href="shop.php" class="text-gray-400 hover:text-white">Shop</a></li>
-            <li><a href="#" class="text-gray-400 hover:text-white">About Us</a></li>
-            <li><a href="#" class="text-gray-400 hover:text-white">Contact</a></li>
-            <li><a href="#" class="text-gray-400 hover:text-white">Blog</a></li>
+            <li><a href="about.php" class="text-gray-400 hover:text-white">About Us</a></li>
+            <li><a href="contact.php" class="text-gray-400 hover:text-white">Contact</a></li>
           </ul>
         </div>
 
         <div>
           <h3 class="text-lg font-bold mb-4">Customer Service</h3>
           <ul class="space-y-2">
-            <li><a href="#" class="text-gray-400 hover:text-white">FAQs</a></li>
+            <li><a href="contact.php" class="text-gray-400 hover:text-white">FAQs</a></li>
             <li><a href="#" class="text-gray-400 hover:text-white">Shipping Policy</a></li>
             <li><a href="#" class="text-gray-400 hover:text-white">Return Policy</a></li>
             <li><a href="#" class="text-gray-400 hover:text-white">Privacy Policy</a></li>
@@ -76,7 +75,7 @@
           <img src="" alt="Visa" class="h-6" />
           <img src="" alt="Mastercard" class="h-6" />
           <img src="" alt="PayPal" class="h-6" />
-          <img src="" alt="American Express" class="h-6" />
+          <img src="" alt="Paystack" class="h-6" />
         </div>
       </div>
     </div>

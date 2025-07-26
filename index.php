@@ -3,7 +3,7 @@ require 'Admin/includes/db.php';
 
 $searchQuery = $_GET['search'] ?? '';
 $categoryName = $_GET['category'] ?? '';
-$pageTitle = "All Products";
+$pageTitle = "Home";
 $pageHeading = "All Products";
 
 if ($searchQuery) {
@@ -289,6 +289,6 @@ unset($product);
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/0.21.1/axios.min.js"></script>
 
-  <script src="index.js?v=1.0"></script>
+  <script src="./assets/index.js"></script>
 </body>
 </html>

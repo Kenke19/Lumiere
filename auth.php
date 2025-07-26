@@ -1,4 +1,13 @@
 <?php
+if (empty($_SERVER['HTTPS']) || $_SERVER['HTTPS'] === 'off') {
+    header("Location: https://" . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI']);
+    exit();
+}
+header("Content-Security-Policy: default-src 'self'; script-src 'self' https://cdn.tailwindcss.com https://accounts.google.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; img-src 'self' data:; font-src 'self' https://cdnjs.cloudflare.com; frame-src https://accounts.google.com; upgrade-insecure-requests;");
+header("Strict-Transport-Security: max-age=31536000; includeSubDomains; preload");
+header('X-Frame-Options: DENY');
+header('X-Content-Type-Options: nosniff');
+header('Referrer-Policy: strict-origin-when-cross-origin');
 // Secure session cookie params - adjust domain for production
 ini_set('session.cookie_httponly', 1);
 ini_set('session.cookie_secure', 1); 
@@ -6,13 +15,16 @@ ini_set('session.use_strict_mode', 1);
 session_set_cookie_params([
     'lifetime' => 86400,
     'path' => '/',
-    'domain' => $_SERVER['HTTP_HOST'], // adjust for your domain without port
+    'domain' => $_SERVER['HTTP_HOST'], 
     'secure' => true,
     'httponly' => true,
     'samesite' => 'Strict'
 ]);
 session_start();
-
+if (!isset($_SESSION['initiated'])) {
+    session_regenerate_id(true);
+    $_SESSION['initiated'] = true;
+}
 // Generate CSRF token if not set
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
@@ -94,8 +106,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             'logged_in' => true
                         ];
                         // Reset login attempts
-                        $_SESSION['login_attempts'] = 0;
-                        header('Location: Admin/index.php');
+                        $_SESSION['login_attempts'][$_SERVER['REMOTE_ADDR']] = [
+                          'count' => 0,
+                          'start' => time()
+                        ];
+                        header('Location: https://' . $_SERVER['HTTP_HOST'] . '/Admin/index.php');
                         exit();
                     } else {
                         recordLoginAttempt();
@@ -122,7 +137,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             ];
                             // Reset login attempts
                             $_SESSION['login_attempts'] = 0;
-                            header('Location: index.php');
+                            header('Location: https://' . $_SERVER['HTTP_HOST'] . '/index.php');//for production
                             exit();
                         } else {
                             recordLoginAttempt();
@@ -154,7 +169,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif (strlen($password) < 8) {
             $register_error = 'Password must be at least 8 characters.';
         } else {
-            // Check if email exists
             $stmt = $pdo->prepare("SELECT id FROM users WHERE email = ? LIMIT 1");
             $stmt->execute([$email]);
             
@@ -166,8 +180,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $stmt = $pdo->prepare("INSERT INTO users (name, email, password_hash, email_verified, email_verification_token) VALUES (?, ?, ?, 0, ?)");
                 if ($stmt->execute([$name, $email, $password_hash, $verification_token])) {
-                    // Send email verification
-                    $verifyUrl = "https://localhost/E-shop/verify_email.php?token=$verification_token"; //to be changed in production
+                    // Email verification
+                    $verifyUrl = "https://" . $_SERVER['HTTP_HOST'] . "/verify_email.php?token=$verification_token";
                     $subject = "Verify Your Email - Lumière";
                     $htmlBody = "
                         <h1>Hello, " . htmlspecialchars($name) . "!</h1>
@@ -321,7 +335,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       <p class="text-red-600 mb-4"><?= htmlspecialchars($login_error) ?></p>
     <?php endif; ?>
 
-    <form method="POST" novalidate>
+    <form method="POST" action="https://<?= $_SERVER['HTTP_HOST'] ?><?= $_SERVER['REQUEST_URI'] ?>" novalidate>
       <!-- CSRF Token input (must always be included) -->
       <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
 
@@ -337,7 +351,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             autocomplete="username"
             value="<?= isset($_POST['identifier']) && !$flip_to_register ? htmlspecialchars($_POST['identifier']) : '' ?>"
           />
-          <label for="identifier" class="absolute left-4 top-3 text-gray-500 transition-all duration-300 pointer-events-none">Email or Username</label>
+          <label for="identifier" class="absolute left-4 top-3 text-gray-500 transition-all duration-300 pointer-events-none">Email</label>
         </div>
 
         <div class="relative">
@@ -352,12 +366,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
           />
           <label for="password" class="absolute left-4 top-3 text-gray-500 transition-all duration-300 pointer-events-none">Password</label>
           <button type="button" 
-          class="absolute right-3 top-3 text-gray-400 hover:text-indigo-600 focus:outline-none" 
-          aria-label="Toggle password visibility" 
-          onclick="togglePasswordVisibility('password', this)">
-    <i class="fas fa-eye"></i>
-  </button>
+            class="absolute right-3 top-3 text-gray-400 hover:text-indigo-600 focus:outline-none" 
+            aria-label="Toggle password visibility" 
+            data-toggle-password="password">
+            <i class="fas fa-eye"></i>
+          </button>
         </div>
+
 
         <button type="submit" name="login_submit" class="w-full gradient-bg text-white py-3 px-4 rounded-lg font-medium hover:opacity-90 transition shadow-lg">
           Sign In
@@ -375,7 +390,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                   <div class="grid grid-cols-3 gap-3">
                     <!-- Google Sign-In Button -->
                     <div id="g_id_onload" data-client_id="<?= htmlspecialchars(GOOGLE_CLIENT_ID) ?>"
-                    data-login_uri="http://localhost/E-shop/google-callback.php"
+                    data-login_uri="https://<?= htmlspecialchars($_SERVER['HTTP_HOST']) ?>/google-callback.php"
                     data-auto_prompt="false">
                     </div>
                     <div class="g_id_signin" data-type="standard"></div>
@@ -383,7 +398,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                   
         <p class="text-center text-sm text-gray-600">
           Don't have an account? 
-          <button type="button" onclick="flipForm()" class="text-indigo-600 font-medium hover:text-indigo-500">Sign up</button>
+          <button type="button" data-action="flip" class="text-indigo-600 font-medium hover:text-indigo-500">Sign up</button>
         </p>
       </div>
     </form>
@@ -403,7 +418,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       <p class="text-green-600 mb-4"><?= $register_success ?></p>
     <?php endif; ?>
 
-    <form method="POST" novalidate>
+    <form method="POST" action="https://<?= $_SERVER['HTTP_HOST'] ?><?= $_SERVER['REQUEST_URI'] ?>" novalidate>
       <!-- CSRF Token -->
       <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
 
@@ -450,11 +465,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   <label for="register_password" class="absolute left-4 top-3 text-gray-500 transition-all duration-300 pointer-events-none">Password</label>
 
   <button type="button" 
-          class="absolute right-3 top-3 text-gray-400 hover:text-indigo-600 focus:outline-none" 
-          aria-label="Toggle password visibility" 
-          onclick="togglePasswordVisibility('register_password', this)">
-    <i class="fas fa-eye"></i>
-  </button>
+        class="absolute right-3 top-3 text-gray-400 hover:text-indigo-600 focus:outline-none" 
+        aria-label="Toggle password visibility" 
+        data-toggle-password="register_password">
+  <i class="fas fa-eye"></i>
+</button>
+
 </div>
 
 <div class="relative">
@@ -470,18 +486,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   <label for="register_confirm_password" class="absolute left-4 top-3 text-gray-500 transition-all duration-300 pointer-events-none">Confirm Password</label>
 
   <button type="button" 
-          class="absolute right-3 top-3 text-gray-400 hover:text-indigo-600 focus:outline-none" 
-          aria-label="Toggle confirm password visibility" 
-          onclick="togglePasswordVisibility('register_confirm_password', this)">
-    <i class="fas fa-eye"></i>
-  </button>
+        class="absolute right-3 top-3 text-gray-400 hover:text-indigo-600 focus:outline-none" 
+        aria-label="Toggle confirm password visibility" 
+        data-toggle-password="register_confirm_password">
+  <i class="fas fa-eye"></i>
+</button>
+
 </div>
 
         <button type="submit" name="register_submit" class="w-full gradient-bg text-white py-3 px-4 rounded-lg font-medium hover:opacity-90 transition shadow-lg">Sign Up</button>
 
         <p class="text-center text-sm text-gray-600">
           Already have an account? 
-          <button type="button" onclick="flipForm()" class="text-indigo-600 font-medium hover:text-indigo-500">Sign in</button>
+          <button type="button" data-action="flip" class="text-indigo-600 font-medium hover:text-indigo-500">Sign in</button>
         </p>
       </div>
     </form>
@@ -494,64 +511,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   </div>
 </div>
 
-<script>
-    function flipForm() {
-      const flipContainer = document.querySelector('.form-flip');
-      const body = document.body;
-      
-      // Prevent body scroll during animation
-      body.classList.add('form-animating');
-      
-      flipContainer.classList.toggle('flipped');
-      
-      setTimeout(() => {
-        body.classList.remove('form-animating');
-      }, 600);
-    }
-    
-    // Automatically flip to register form if PHP set flag
-    <?php if ($flip_to_register): ?>
-      document.addEventListener('DOMContentLoaded', () => {
-        const flipContainer = document.querySelector('.form-flip');
-        if (!flipContainer.classList.contains('flipped')) {
-          flipContainer.classList.add('flipped');
-        }
-      });
-    <?php endif; ?>
-    
-    // Floating label effect
-    document.querySelectorAll('.input-field').forEach(input => {
-      input.addEventListener('focus', function() {
-        this.nextElementSibling.classList.add('text-indigo-500');
-      });
-      
-      input.addEventListener('blur', function() {
-        if (!this.value) {
-          this.nextElementSibling.classList.remove('text-indigo-500');
-        }
-      });
-      
-      // Trigger label float if input has value on page load
-      if (input.value) {
-        input.nextElementSibling.classList.add('text-indigo-500');
-      }
-    });
-    function togglePasswordVisibility(inputId, btn) {
-  const input = document.getElementById(inputId);
-  const icon = btn.querySelector('i');
-
-  if (input.type === 'password') {
-    input.type = 'text';
-    icon.classList.remove('fa-eye');
-    icon.classList.add('fa-eye-slash');
-  } else {
-    input.type = 'password';
-    icon.classList.remove('fa-eye-slash');
-    icon.classList.add('fa-eye');
-  }
-}
-
-</script>
+<script src="./assets/auth.js"></script>
 
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </body>

@@ -1,5 +1,4 @@
-
-  <!-- Navigation -->
+<!-- Navigation -->
   <nav class="bg-white shadow-md sticky top-0 z-50">
     <div
       class="container mx-auto px-4 py-3 flex justify-between items-center"
@@ -159,4 +158,4 @@
     aria-hidden="true"
   ></div>
 
-  <script src="index.js?v=1.0"></script>
+  <script src="./assets/index.js?v=1.0"></script>

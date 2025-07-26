@@ -475,7 +475,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_to_cart'])) {
 
   <?php include 'footer.php'; ?>
 
-  <script src="product.js?v=1.0"></script>
+  <script src="./assets/product.js?v=1.0"></script>
   <script>
     // Thumbnail active border toggle
     function setActiveThumbnail(selectedImg) {
